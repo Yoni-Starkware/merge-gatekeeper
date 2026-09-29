@@ -47,7 +47,13 @@ inputs:
     default: "false"
 runs:
   using: "docker"
-  image: "Dockerfile"
+  # A prebuilt image, published by .github/workflows/release-image.yaml when this repo is
+  # tagged, instead of a Dockerfile rebuilt on every consumer run: the rebuild pulled its Go
+  # base from public.ecr.aws each time and that registry's 429 data limit failed the
+  # gatekeeper — a required check — often enough to eject PRs from merge queues. The tag here
+  # must match the git tag consumers pin (by commit SHA); swap it for the image digest the
+  # release run prints once that build exists.
+  image: "docker://ghcr.io/starkware-libs/merge-gatekeeper:v1.4.0"
   args:
     - "validate"
     - "--token=${{ inputs.token }}"
