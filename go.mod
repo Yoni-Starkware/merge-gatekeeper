@@ -1,6 +1,6 @@
 module github.com/starkware-libs/merge-gatekeeper
 
-go 1.25.0
+go 1.25.9
 
 require (
 	github.com/google/go-github/v84 v84.0.0

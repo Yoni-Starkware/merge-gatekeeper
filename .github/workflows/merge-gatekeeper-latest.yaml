@@ -1,4 +1,8 @@
 ---
+# Dogfood: gate this repo's own PRs with the gatekeeper built FROM SOURCE at the PR head.
+# Not `uses: ./` — that runs the published image named in action.yml, which does not exist
+# until the tag that produces it is pushed, and would not exercise the PR's code anyway.
+# The args below mirror action.yml's defaults exactly.
 name: Merge Gatekeeper
 
 on:
@@ -15,11 +19,27 @@ jobs:
       actions: read
     steps:
       - name: Check out
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
 
-      - name: Run Merge Gatekeeper
-        uses: ./
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          go-version-file: go.mod
+
+      - name: Run Merge Gatekeeper from source
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          go run . validate \
+            --token="$GITHUB_TOKEN" \
+            --self=merge-gatekeeper \
+            --interval=5 \
+            --ref="$HEAD_SHA" \
+            --timeout=600 \
+            --ignored= \
+            --confirm-polls=3 \
+            --empty-grace=30 \
+            --debug=false

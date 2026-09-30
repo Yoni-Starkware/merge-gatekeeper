@@ -1,0 +1,81 @@
+# Builds the action's container image ONCE per release and publishes it to GHCR.
+#
+# Why: with `image: Dockerfile` in action.yml, every consumer run rebuilt the image from
+# public.ecr.aws, and that registry's anonymous data limit answered 429 often enough to fail
+# the gatekeeper — a required check — and eject PRs from merge queues. GHCR pulls from Actions
+# runners are not rate-limited, and the binary only changes when this repo is tagged.
+#
+# On a pull request the image is built but not pushed, so a broken Dockerfile fails review
+# rather than a release.
+name: Release image
+
+on:
+  push:
+    tags:
+      # Release tags only: the moving `v1` alias and any future major alias must not
+      # re-publish an image on top of a release.
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
+  pull_request:
+    paths:
+      - Dockerfile
+      - go.mod
+      - go.sum
+      - '**.go'
+      - .github/workflows/release-image.yaml
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      # Built here rather than in the Dockerfile so no Go base image is pulled at all; the
+      # Dockerfile only copies this binary onto distroless. Static, so it runs there.
+      - name: Build the binary
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o merge-gatekeeper .
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build (and on a tag, push)
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          platforms: linux/amd64
+          push: ${{ github.event_name == 'push' }}
+          # On a tag the git tag names the image; on a pull request `ref_name` is "N/merge",
+          # which is not a valid image tag, so name the unpushed build after the PR instead.
+          tags: ghcr.io/${{ github.repository }}:${{ github.event_name == 'push' && github.ref_name || format('pr-{0}', github.event.pull_request.number) }}
+          provenance: false
+
+      # Values reach the shell through the environment, never by expanding `${{ }}` inside
+      # the script: a tag name is user input, and expanded in place it would run as code.
+      - name: Print the published digest
+        if: github.event_name == 'push'
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+          IMAGE_TAG: ${{ github.ref_name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          echo "$IMAGE:$IMAGE_TAG"
+          echo "digest: $DIGEST"
+          echo "Pin action.yml to: docker://$IMAGE@$DIGEST" >> "$GITHUB_STEP_SUMMARY"
